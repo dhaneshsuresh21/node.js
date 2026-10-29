@@ -316,6 +316,87 @@ flowchart TD
 > [!NOTE]
 > **libuv 1.45 / Node.js 20+ change:** according to the official docs, timers now run **after** the poll phase in each iteration. In earlier versions they ran before it. For backward compatibility, libuv still runs timers **once before entering the loop**, so the classic diagram above is still the right mental model for almost every case.
 
+#### Function examples for each phase
+
+**⏱️ Timers: `setTimeout`, `setInterval`**
+
+```js
+setTimeout(() => console.log("runs once after ≥ 100 ms"), 100);
+const id = setInterval(() => console.log("runs every 1 s"), 1000);
+```
+
+**🔸 Microtask queue (between callbacks, not a phase): `process.nextTick`, `promise.then()`**
+
+```js
+process.nextTick(() => console.log("nextTick: highest priority"));
+Promise.resolve().then(() => console.log("promise.then: runs right after nextTick"));
+```
+
+**📨 Pending callbacks: `socket.on('error')`, some TCP connection errors**
+
+```js
+const net = require("net");
+const socket = net.connect(9999, "localhost"); // nothing listening on this port
+socket.on("error", (err) => console.log("TCP error:", err.code)); // e.g. ECONNREFUSED
+```
+
+**💤 Idle / Prepare: used by Node.js for internal purposes only**
+
+```js
+// No user-facing API. libuv and Node.js use this phase for internal housekeeping.
+```
+
+**📥 Poll: I/O callbacks**
+
+- Reading or writing files
+- Fetching data from an API
+- Querying a database
+- Receiving data over a network socket
+
+```js
+const fs = require("fs");
+const http = require("http");
+
+// Reading / writing files
+fs.readFile("data.txt", "utf8", (err, data) => console.log("file read"));
+fs.writeFile("out.txt", "hello", () => console.log("file written"));
+
+// Fetching data from an API (network response arrives in poll; .then runs as a microtask after it)
+fetch("https://api.example.com/users").then((res) => res.json()).then(console.log);
+
+// Querying a database (e.g. with the pg driver; the result arrives over a socket)
+db.query("SELECT * FROM users", (err, rows) => console.log(rows));
+
+// Receiving data over a network socket
+http.createServer((req, res) => res.end("ok")).listen(3000);
+socket.on("data", (chunk) => console.log("received", chunk.length, "bytes"));
+```
+
+**⚡ Check: `setImmediate`**
+
+```js
+setImmediate(() => console.log("runs right after the poll phase"));
+```
+
+**🚪 Close callbacks: `socket.on('close')`, `server.close()`, etc.**
+
+```js
+socket.on("close", () => console.log("socket closed"));
+socket.destroy(); // abrupt close → 'close' emitted in the close callbacks phase
+
+server.close(() => console.log("server closed"));
+```
+
+| Phase | Function examples |
+|---|---|
+| Timers | `setTimeout()`, `setInterval()` |
+| Microtask queue *(between callbacks)* | `process.nextTick()`, `promise.then()`, `queueMicrotask()` |
+| Pending callbacks | `socket.on('error')`, some deferred TCP connection errors (`ECONNREFUSED`) |
+| Idle / Prepare | Internal use by Node.js / libuv only |
+| Poll | `fs.readFile()`, `fs.writeFile()`, API responses (`fetch`, `http`), database query results, `socket.on('data')` |
+| Check | `setImmediate()` |
+| Close callbacks | `socket.on('close')`, `server.close()` |
+
 ### 4.5 Poll phase decision logic
 
 ```mermaid
